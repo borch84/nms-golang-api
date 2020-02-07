@@ -1,0 +1,186 @@
+package main
+
+import (
+        "database/sql"
+        "encoding/json"
+        "fmt"
+        "log"
+        "net/http"
+        "github.com/gorilla/mux"
+        _ "github.com/ibmdb/go_ibm_db"
+)
+
+type Error struct {
+        Message string `json:"message"`
+}
+
+
+func display(db *sql.DB) error {
+        //st, err := db.Prepare("select ELEMENT_ID,SERVER from KIS.ICMP where SERVER='stiavdvjactest05.va.neustar.com';")
+        st, err := db.Prepare("select ELEMENT_ID,SERVER from KIS.ICMP;")
+        if err != nil {
+                return err
+        }
+        err = execquery(st)
+        if err != nil {
+                return err
+        }
+        return nil
+}
+
+func execquery(st *sql.Stmt) error {
+        rows, err := st.Query()
+        if err != nil {
+                return err
+        }
+        cols, _ := rows.Columns()
+        fmt.Printf("%s    %s      \n", cols[0], cols[1])
+        fmt.Println("-------------------------------------")
+        defer rows.Close()
+        for rows.Next() {
+                var name, status string
+                err = rows.Scan(&name, &status)
+                if err != nil {
+                        return err
+                }
+                fmt.Printf("%v  %v  \n", name, status)
+        }
+        return nil
+}
+
+
+func GetServers(w http.ResponseWriter, r *http.Request) {
+        var error Error
+        con := "HOSTNAME=10.31.40.126;DATABASE=TEPSPR;PORT=50000;UID=db2inst1;PWD=N3tc00l"
+        db, err := sql.Open("go_ibm_db", con)
+        if err != nil {
+                fmt.Println(err)
+        }
+        st, err := db.Prepare("select ELEMENT_ID,SERVER from KIS.HTTP;") //Viene de display
+
+        //Viene de Execquery:
+        rows, err := st.Query()
+        cols, _ := rows.Columns()
+        fmt.Fprintf(w,"%s    %s      \n", cols[0], cols[1])
+        fmt.Fprint(w,"-------------------------------------\n")
+        defer rows.Close()
+        for rows.Next() {
+                var name, status string
+                err = rows.Scan(&name, &status)
+                fmt.Fprintf(w,"%v  %v  \n", name, status)
+        }
+        defer db.Close()
+        if err != nil {
+                if err == sql.ErrNoRows {
+                        error.Message = "Not Found"
+                        SendError(w, http.StatusNotFound, error)
+                        return
+                } else {
+                        error.Message = "Server error"
+                        SendError(w, http.StatusInternalServerError, error)
+                        return
+                }
+        }
+}
+
+func SendError(w http.ResponseWriter, status int, err Error) {
+        w.WriteHeader(status)
+        json.NewEncoder(w).Encode(err)
+}
+
+func SendSuccess(w http.ResponseWriter, data interface{}) {
+        json.NewEncoder(w).Encode(data)
+}
+
+
+func GetServer(w http.ResponseWriter, r *http.Request) {
+  var error Error
+  params := mux.Vars(r)
+  fmt.Fprintf(w, "Parametro Server: %s \n", params["server"])
+  //con := "HOSTNAME=10.31.40.126;DATABASE=TEPSPR;PORT=50000;UID=db2inst1;PWD=N3tc00l" //PROD
+  con := "HOSTNAME=10.31.45.163;DATABASE=TEPS;PORT=50000;UID=db2inst1;PWD=N3tc00l" //DEV
+  db, err := sql.Open("go_ibm_db", con)
+  if err != nil {
+          fmt.Println(err)
+  }
+  //st, err := db.Prepare("select ELEMENT_ID,SERVER from KIS.HTTP where server="+params["server"]+";")
+  st, err := db.Prepare("select ELEMENT_ID,SERVER from KIS.ICMP where server='"+params["server"]+"';")
+  rows, err := st.Query()
+  cols, _ := rows.Columns()
+  fmt.Fprintf(w,"%s    %s      \n", cols[0], cols[1])
+  fmt.Fprint(w,"-------------------------------------\n")
+  defer rows.Close()
+  for rows.Next() {
+          var name, server string
+          err = rows.Scan(&name, &server)
+          fmt.Fprintf(w,"%v  %v  \n", name, server)
+  }
+  defer db.Close()
+  if err != nil {
+          if err == sql.ErrNoRows {
+                  error.Message = "Not Found"
+                  SendError(w, http.StatusNotFound, error)
+                  return
+          } else {
+                  error.Message = "Server error"
+                  SendError(w, http.StatusInternalServerError, error)
+                  return
+          }
+  }
+
+}
+
+func RemoveServer (w http.ResponseWriter, r *http.Request) {
+  params := mux.Vars(r)
+  fmt.Fprintf(w, "Parametro Server: %s \n", params["server"])
+  //con := "HOSTNAME=10.31.40.126;DATABASE=TEPSPR;PORT=50000;UID=db2inst1;PWD=N3tc00l" //PROD
+  con := "HOSTNAME=10.31.45.163;DATABASE=TEPS;PORT=50000;UID=db2inst1;PWD=N3tc00l" //DEV
+  db, err := sql.Open("go_ibm_db", con)
+  if err != nil {
+    fmt.Println(err)
+    return
+  }
+  result, err := db.Exec("delete from kis.icmp where server='"+params["server"]+"'")
+  fmt.Println(result)
+  if err != nil {
+    fmt.Println("Error de db.Exec: ", err)
+  }
+
+  //rowsDeleted, err := result.RowsAffected()
+
+  //if err != nil {
+  //  fmt.Println(err)
+  //}
+
+  //fmt.Println("rows affected: %d",rowsDeleted)
+  defer db.Close()
+}
+
+func main() {
+
+        router := mux.NewRouter()
+
+        router.HandleFunc("/servers", GetServers).Methods("GET")
+        router.HandleFunc("/servers/{server}", GetServer).Methods("GET")
+        router.HandleFunc("/delete/{server}", RemoveServer).Methods("GET")
+        fmt.Println("Server is running at port 8000")
+        log.Fatal(http.ListenAndServe(":8000", router))
+
+
+        // con := "HOSTNAME=10.31.40.126;DATABASE=TEPSPR;PORT=50000;UID=db2inst1;PWD=N3tc00l"
+        // db, err := sql.Open("go_ibm_db", con)
+        // if err != nil {
+        //         fmt.Println(err)
+        // }
+        // // log.Print(db)
+        // err = display(db)
+        // if err != nil {
+        //         fmt.Println(err)
+        // }
+        // defer db.Close()
+        // // log.Print(db.Ping())
+        // // err = db.Ping()
+        // if err != nil {
+        //         panic(err.Error()) // proper error handling instead of panic
+        // }
+}
